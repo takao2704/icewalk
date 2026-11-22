@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101e2f"><title>ICEWALK</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101e2f;color:#ecf8ff;font:16px system-ui,sans-serif}.game{max-width:1100px;height:100svh;min-height:440px;margin:auto;display:flex;flex-direction:column;padding:clamp(12px,3vw,32px);gap:12px}header,.stats,footer{display:flex;align-items:center;justify-content:space-between;gap:10px}h1{margin:0;font-size:clamp(25px,5vw,56px);font-style:italic;letter-spacing:-.065em;line-height:1}small{color:#b2cbdb;font-size:13px}button{font:inherit;color:inherit;border:1px solid #477080;border-radius:12px;padding:9px 14px;background:#20394b;cursor:pointer}button:focus-visible{outline:3px solid #ffbe6e}.stats{font-variant-numeric:tabular-nums}.stats b{display:block;font-size:1.4rem}.track{height:5px;background:#33485b;border-radius:10px;overflow:hidden}.track i{display:block;width:0;height:100%;background:#ffc67e}.stage{position:relative;flex:1;min-height:200px;border-radius:20px;overflow:hidden;background:#244760}canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}canvas:active{cursor:grabbing}.surface{position:absolute;top:12px;left:12px;border-radius:20px;padding:6px 12px;background:#12273ce8;font-weight:bold;pointer-events:none}.overlay{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;text-align:center;background:#0a1a2a88;padding:15px}.overlay[hidden]{display:none}.overlay strong{font-size:clamp(25px,7vw,58px)}.overlay button{background:#ffd092;color:#192937;border:0;font-weight:800}.overlay p{margin:6px 0 16px}footer p{margin:0;font-size:14px;line-height:1.45}.meter{min-width:92px;text-align:center}.rail{width:92px;height:10px;background:linear-gradient(90deg,#f88a7b,#375369 30%,#70decf 50%,#375369 70%,#f88a7b);position:relative;border-radius:30px;margin-top:5px}.rail i{position:absolute;top:-3px;left:50%;width:4px;height:16px;background:white;border-radius:5px;transform:translateX(-50%)}
+.surface[data-state="glide"]{background:#126363;color:#e1fffa}
+.surface[data-state="ice"]{background:#164857;color:#d0fbff}
+.surface[data-state="warning"]{background:#583b29;color:#ffe2ad}
+.surface[data-state="fall"]{background:#662f34;color:#ffe3df}
+.rail[data-state="warning"] i,.rail[data-state="fall"] i{background:#ffb07a}
+.overlay .result{font-size:clamp(24px,6vw,40px);font-weight:800;font-variant-numeric:tabular-nums;margin-bottom:2px}
+.overlay .detail{margin:3px 0 16px;color:#d3e9fa}
+.overlay [hidden]{display:none}
+</style></head><body><main class="game">
+<header><div><h1>ICEWALK</h1><small>凍った道のタイムトライアル</small></div><button id="reset">リセット</button></header>
+<div class="stats"><div><small>タイム</small><b id="time">0.00</b></div><div><small>ベスト</small><b id="best">—</b></div><div><small>転倒</small><b id="falls">0</b></div></div>
+<div class="track" role="progressbar" aria-label="コース進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress"></i></div>
+<div class="stage"><canvas id="scene" aria-label="人物をつかんで歩くコース"></canvas><div id="surface" class="surface">雪道</div><div id="overlay" class="overlay"><strong id="headline">氷の道を、歩き切れ。</strong><p id="description">人物の胸をつかんで、右上に引こう。</p><p id="detail" class="detail" hidden></p><button id="start">コースに出る</button></div></div>
+<footer><p><b>右上に引くと前進。</b><br>傾いたら、指を反対側へ少し戻す。</p><div class="meter"><small>バランス</small><div class="rail"><i id="balance"></i></div></div></footer>
+</main><script>
+const byId = id => document.getElementById(id);
+const canvas = byId('scene'), ctx = canvas.getContext('2d');
+const ice = [[310,590],[850,1180],[1410,1870],[2090,2470]];
+const finish = 2700, clamp = (x,a,b) => Math.max(a,Math.min(b,x));
+const onIce = x => ice.some(([a,b]) => x >= a && x < b);
+const keys = new Set();
+let width,height,ground,scale,camera,x,v,lean,spin,step,falls,recovery,elapsed,mode,pointer,cursor,last,clockStart;
+const minimumGlideSpeed = 58;
+const glideEntryWindow = .18;
+let glideWindow, gliding;
+let best = null;
+try {
+  const savedTime = Number(localStorage.getItem('icewalk-best-v1'));
+  if (Number.isFinite(savedTime) && savedTime > 0) best = savedTime;
+} catch {}
+const format = t => t.toFixed(2) + ' s';
+function roadState() {
+  if (recovery > 0) return 'fall';
+  if (!onIce(x)) return 'snow';
+  if (gliding) return 'glide';
+  return Math.abs(lean) >= .48 ? 'warning' : 'ice';
+}
+function reset(modeAfter='ready') {
+  x=65; v=0; lean=0; spin=0; step=0; falls=0; recovery=0; elapsed=0; mode=modeAfter; pointer=null; cursor=null; keys.clear();
+  glideWindow=0; gliding=false;
+  byId('overlay').hidden = modeAfter === 'ready';
+}
+function resize() {
+  const box = canvas.getBoundingClientRect(), density = Math.min(2,devicePixelRatio || 1);
+  width=box.width; height=box.height;
+  canvas.width=Math.round(width*density); canvas.height=Math.round(height*density);
+  ctx.setTransform(density,0,0,density,0,0);
+  ground=height*.76; scale=clamp(height/450,.7,1.3);
+}
+function begin(now) { if(mode==='ready'){mode='running';clockStart=now;} }
+function update(dt,now) {
+  if(mode!=='running') return;
+  elapsed=(now-clockStart)/1000;
+  if(recovery>0){
+    recovery=Math.max(0,recovery-dt);
+    if(recovery===0){lean=0;spin=0;}
+    return;
+  }
+  const icy=onIce(x);
+  const anchor=avatarX(), chest=ground-60*scale;
+  const pull=cursor ? clamp((chest-cursor.y)/(52*scale),0,1) : keys.has('ArrowUp') ? .67 : 0;
+  const steer=cursor ? clamp((cursor.x-anchor)/(48*scale),-1,1) :
+    Number(keys.has('ArrowRight'))*.43-Number(keys.has('ArrowLeft'))*.55;
+  const holding=Boolean(cursor)||keys.size>0;
+  const drive=pull*(.72+.28*steer)+(cursor? Math.max(0,steer)*.26 : 0);
+  const acceleration=holding?(185*drive):0;
+  const neutral=pull<=.14 && Math.abs(steer)<=.16;
+  if (gliding && !neutral) gliding=false;
+  if (icy && glideWindow>0) {
+    glideWindow=Math.max(0,glideWindow-dt);
+    if (neutral && Math.abs(lean)<=.18 && Math.abs(spin)<=.65) {
+      gliding=true;
+      glideWindow=0;
+    }
+  }
+  if (!gliding) v=clamp(v+(acceleration-v*(icy? .87:2.45))*dt,0,145);
+  const instability=icy ? Math.max(0,(v-46)/76) : 0;
+  const ripple=Math.sin(x*.048)*.55 + Math.sin(x*.021)*.35;
+  const torque=gliding ? steer*.8+ripple*.16 : icy ? .19+instability*(2.05+ripple)+steer*3.45 : steer*.95;
+  spin+=(torque+lean*(gliding? -5 : icy? -2.3+instability*3.2:-12)-spin*(gliding? 4.5 : icy? 3.1:7.5))*dt;
+  lean=clamp(lean+spin*dt,-1.4,1.4);
+  x=Math.min(finish,x+v*dt);
+  if (!gliding) step+=v*dt*.07;
+  const nextIcy=onIce(x);
+  if (!icy && nextIcy && v>=minimumGlideSpeed) glideWindow=glideEntryWindow;
+  if (!nextIcy) { gliding=false; glideWindow=0; }
+  if(icy && Math.abs(lean)>.77) {
+    gliding=false; glideWindow=0;
+    falls++; recovery=1.35; v=0; pointer=null;cursor=null;
+    if(navigator.vibrate) navigator.vibrate(55);
+  }
+  if(x>=finish){
+    mode='finished';pointer=null;cursor=null;
+    const previousBest=best;
+    const record=previousBest===null || elapsed<previousBest;
+    const gap=previousBest===null ? '初完走' :
+      record ? '前回ベストを '+format(previousBest-elapsed)+' 更新' :
+      elapsed===previousBest ? '自己ベストと同タイム' : '自己ベストより '+format(elapsed-previousBest)+' 遅い';
+    if(record){best=elapsed;try{localStorage.setItem('icewalk-best-v1',String(best));}catch{}}
+    show(previousBest===null || !record ? 'ゴール！' : 'ベスト更新！',format(elapsed),'もう一度',gap+' ／ 転倒 '+falls+' 回');
+  }
+}
+function avatarX(){return x*scale-Math.max(0,x*scale-width*.32);}
+function show(title,description,label,detail=''){
+  byId('headline').textContent=title;byId('description').textContent=description;
+  byId('description').classList.toggle('result', Boolean(detail));
+  byId('detail').hidden=!detail;
+  byId('detail').textContent=detail;
+  byId('start').textContent=label;byId('overlay').hidden=false;
+}
+function line(x1,y1,x2,y2,color,w){
+  ctx.strokeStyle=color;ctx.lineWidth=w;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+}
+function fill(color,x,y,w,h){ctx.fillStyle=color;ctx.fillRect(x,y,w,h);}
+function disk(color,x,y,r){ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}
+function draw(){
+  camera=Math.max(0,x*scale-width*.32);
+  const sky=ctx.createLinearGradient(0,0,0,height);sky.addColorStop(0,'#152b49');sky.addColorStop(1,'#537787');
+  fill(sky,0,0,width,height);
+  disk('#ffe4b4',width*.76,height*.19,22*scale);
+  for(let layer=0;layer<2;layer++){
+    ctx.beginPath();ctx.moveTo(0,ground);
+    for(let i=-1;i<=Math.ceil(width/58)+1;i++){
+      const p=i*58-(camera*(layer?.25:.12)%58), n=i+Math.floor(camera*(layer?.25:.12)/58);
+      const ridge=.49+layer*.12+(Math.sin(n*1.74)+Math.sin(n*.67))*.085;
+      ctx.lineTo(p,height*ridge);
+    }
+    ctx.lineTo(width,ground+4);ctx.lineTo(0,ground+4);ctx.fillStyle=layer?'#426578':'#304c68';ctx.fill();
+  }
+  for(let i=0;i<52;i++){
+    const px=((i*149.25-camera*.16)%(width+44)+width+44)%(width+44)-22;
+    const py=((i*71.31)%(ground*.92));
+    disk(i%4?'#c5e0ec88':'#e8fbffbd',px,py,1+i%3*.39);
+  }
+  fill('#bfd7df',0,ground,width,height-ground);
+  fill('#e4f1f4',0,ground,width,7*scale);
+  for(const [a,b] of ice){
+    const left=a*scale-camera,right=b*scale-camera;
+    if(right<0||left>width)continue;
+    fill('#629fb3',left,ground,right-left,height-ground);
+    fill('#a4e8f0',left,ground,right-left,7*scale);
+    for(let p=a+21;p<b-15;p+=37){
+      const q=p*scale-camera;
+      line(q,ground+17*scale,q+15*scale,ground+10*scale,'#b4eaf2',1.6);
+      line(q+5*scale,ground+36*scale,q+19*scale,ground+28*scale,'#82c1d0',1);
+    }
+  }
+  const flag=finish*scale-camera;
+  if(flag>-55&&flag<width+55){
+    line(flag,ground,flag,ground-94*scale,'#182e41',4);
+    for(let row=0;row<3;row++)for(let col=0;col<5;col++) fill((row+col)%2?'#1c3245':'#f4fbff',flag+col*8*scale,ground+(row*8-94)*scale,8*scale,8*scale);
+  }
+  for(let p=Math.floor(camera/105)*105;p<camera+width;p+=105){
+    const px=p-camera;
+    if(!onIce(p/scale))line(px,ground+24,px+15,ground+24,'#aac6d0',2);
+  }
+  const ax=avatarX();
+  const state=roadState();
+  if (state==='warning' || state==='glide' || (state==='ice' && v>55)) {
+    const strength=clamp(v/145,0,1);
+    const direction=gliding ? 1 : Math.sign(lean+spin*.18)||1;
+    for(let i=0;i<6;i++){
+      const phase=(x*.044+i/6)%1;
+      const spread=(11+phase*35)*scale;
+      const opacity=(1-phase)*(.28+strength*.45);
+      line(ax-direction*spread,ground-4-phase*10*scale,
+        ax-direction*(spread+6*scale),ground-3-phase*7*scale,
+        'rgba(204,247,255,'+opacity+')',1.6*scale);
+    }
+  }
+  ctx.save();ctx.translate(ax,ground);ctx.scale(scale,scale);
+  ctx.fillStyle='#203e5455';ctx.beginPath();ctx.ellipse(0,2,24,5,0,0,Math.PI*2);ctx.fill();
+  ctx.rotate(recovery>0 ? Math.sign(lean)*Math.min(1.45,(1.35-recovery)*7+.77) : lean*.9);
+  for(const side of [-1,1]){
+    const swing=gliding ? 4*side : Math.sin(step)*14*side;
+    const foot=side*6+swing, lift=gliding ? 0 : Math.max(0,Math.cos(step)*side)*Math.min(7,v*.13);
+    line(side*5,-28,foot,-5-lift,'#203042',8);line(foot-2,-4-lift,foot+6,-4-lift,'#13263a',6);
+    line(side*5,-49,side*(14+Math.abs(lean)*10),-34+side*lean*8,'#ec713a',7);
+  }
+  line(0,-30,0,-52,'#fc8b4b',22);
+  line(-7,-52,7,-52,'#ffc86e',5);
+  disk('#ffcca8',0,-63,10);
+  disk('#234455',4,-64,1.3);
+  line(-9,-69,8,-69,'#157e82',7);disk('#27a1a0',-2,-74,6);
+  ctx.restore();
+  if(cursor){
+    line(ax+Math.sin(lean*.9)*55*scale,ground-56*scale,cursor.x,cursor.y,'#ffdbad',2);
+    disk(state==='warning'?'#ffae76':'#fff1d3a8',cursor.x,cursor.y,7);
+    if(state==='warning'){
+      // Screen-space cue points to the side that counteracts the lean.
+      const direction=-Math.sign(lean);
+      const tip=ax+direction*36*scale, y=ground-88*scale;
+      line(tip-direction*18*scale,y,tip,y,'#ffd098',2.5);
+      line(tip-direction*6*scale,y-5*scale,tip,y,'#ffd098',2.5);
+      line(tip-direction*6*scale,y+5*scale,tip,y,'#ffd098',2.5);
+    }
+  } else if(mode==='ready'){
+    ctx.strokeStyle='#ffce91';ctx.lineWidth=2;ctx.beginPath();ctx.arc(ax,ground-56*scale,23*scale+Math.sin(performance.now()/230)*3,0,7);ctx.stroke();
+  }
+}
+const surfaceLabels={glide:'滑走中',snow:'雪道',ice:'氷の上',warning:'氷の上 · バランス注意',fall:'転倒 · 起き上がり中'};
+let displayedState;
+function frame(now){
+  update(Math.min(.04,(now-last)/1000||0),now);last=now;draw();
+  byId('time').textContent=format(elapsed);byId('best').textContent=best===null?'—':format(best);
+  byId('falls').textContent=falls;
+  const state=roadState();
+  if(state!==displayedState){
+    byId('surface').textContent=surfaceLabels[state];
+    byId('surface').dataset.state=state;
+    byId('balance').parentElement.dataset.state=state;
+    displayedState=state;
+  }
+  const pct=Math.round((x-65)/(finish-65)*100);
+  byId('progress').style.width=pct+'%';byId('progress').parentElement.setAttribute('aria-valuenow',pct);
+  byId('balance').style.left=clamp(50+lean*58,2,98)+'%';
+  requestAnimationFrame(frame);
+}
+function point(event){const box=canvas.getBoundingClientRect();return {x:event.clientX-box.left,y:event.clientY-box.top};}
+canvas.addEventListener('pointerdown',event=>{
+  if(pointer!==null||recovery>0||!['ready','running'].includes(mode))return;
+  const p=point(event);
+  if(Math.abs(p.x-avatarX())>47*scale||p.y<ground-105*scale||p.y>ground+20*scale)return;
+  event.preventDefault();canvas.setPointerCapture(event.pointerId);pointer=event.pointerId;cursor=p;begin(performance.now());
+});
+canvas.addEventListener('pointermove',event=>{if(pointer===event.pointerId)cursor=point(event);});
+for(const name of ['pointerup','pointercancel','lostpointercapture']){
+  canvas.addEventListener(name,event=>{if(pointer===event.pointerId){pointer=null;cursor=null;}});
+}
+addEventListener('keydown',event=>{
+  if(!['ArrowUp','ArrowLeft','ArrowRight'].includes(event.key)||!['ready','running'].includes(mode))return;
+  event.preventDefault();keys.add(event.key);begin(performance.now());
+});
+addEventListener('keyup',event=>keys.delete(event.key));
+addEventListener('blur',()=>{keys.clear();pointer=null;cursor=null;});
+byId('start').onclick=()=>reset();
+byId('reset').onclick=()=>{reset('intro');show('氷の道を、歩き切れ。','人物の胸をつかんで、右上に引こう。','コースに出る');};
+new ResizeObserver(resize).observe(canvas);resize();reset('intro');requestAnimationFrame(frame);
+</script></body></html>
