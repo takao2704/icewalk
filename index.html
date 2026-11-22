@@ -18,11 +18,12 @@
 .result-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
 .overlay .share{color:#eaf7ff;background:#20394b;border:1px solid #6995a7}
 .share-status{min-height:1.4em;font-size:14px;color:#e3f3fc}
+.landmark{position:absolute;top:12px;right:12px;max-width:51%;padding:6px 10px;border-radius:12px;background:#15283cdd;color:#e8f4ff;font-size:.82rem;line-height:1.3;text-align:right;pointer-events:none}
 </style></head><body><main class="game">
 <header><div><h1>ICEWALK</h1><small>凍結路横断選手権 · 富良野</small></div><button id="reset">リセット</button></header>
 <div class="stats"><div><small>タイム</small><b id="time">0.00</b></div><div><small>ベスト</small><b id="best">—</b></div><div><small>転倒</small><b id="falls">0</b></div></div>
 <div class="track" role="progressbar" aria-label="コース進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress"></i></div>
-<div class="stage"><canvas id="scene" aria-label="人物をつかんで歩くコース"></canvas><div id="surface" class="surface">雪道</div><div id="overlay" class="overlay"><strong id="headline">凍った道を渡るだけ。</strong><p id="description">夜明け前の富良野。ゴールは青い橋。</p><p id="detail" class="detail" hidden></p><div class="result-actions"><button id="start">コースに出る</button><button id="share" class="share" hidden>歩行記録を送る</button></div><p id="share-status" class="share-status" role="status" hidden></p></div></div>
+<div class="stage"><canvas id="scene" aria-label="人物をつかんで歩くコース"></canvas><div id="surface" class="surface">雪道</div><div id="landmark" class="landmark">コンシェルジュフラノ</div><div id="overlay" class="overlay"><strong id="headline">凍った道を渡るだけ。</strong><p id="description">夜明け前の富良野。ゴールは青い橋。</p><p id="detail" class="detail" hidden></p><div class="result-actions"><button id="start">コースに出る</button><button id="share" class="share" hidden>歩行記録を送る</button></div><p id="share-status" class="share-status" role="status" hidden></p></div></div>
 <footer><p><b>人物の胸をつかんで右上へ。</b><br>傾いたら、指を反対側へ少し戻す。</p><div class="meter"><small>バランス</small><div class="rail"><i id="balance"></i></div></div></footer>
 </main><script>
 const byId = id => document.getElementById(id);
@@ -202,6 +203,89 @@ function drawFurano(dawn){
     }
   }
 }
+const landmarks=[
+  [105,'コンシェルジュフラノ','concierge'],
+  [365,'遠くのスキー場','ski'],
+  [630,'へそ踊り像','statue'],
+  [900,'軒下のへそ踊り人形','doll'],
+  [1170,'みよしの','shop'],
+  [1440,'へそビル','heso'],
+  [1720,'木造の建物','timber'],
+  [2050,'朝日に染まる雪山','sunrise'],
+  [2480,'青い橋の入口','statue'],
+  [2700,'青い橋','bridge']
+];
+function landmarkText(text,x,y,color,size){
+  ctx.fillStyle=color;
+  ctx.font='700 '+size+'px system-ui, sans-serif';
+  ctx.textAlign='center';
+  ctx.fillText(text,x,y);
+}
+function landmarkFigure(x,y,painted){
+  fill('#646678',x-26,y-8,52,9);
+  line(x-10,y-11,x-15,y-32,'#655b60',9);
+  line(x+10,y-11,x+15,y-32,'#655b60',9);
+  line(x-27,y-35,x+27,y-35,painted?'#2b9bcd':'#817680',9);
+  disk(painted?'#2b9bcd':'#807581',x,y-30,19);
+  disk(painted?'#f7d6a8':'#a49a96',x,y-31,13);
+  disk('#352b36',x-5,y-34,2);
+  disk('#352b36',x+5,y-34,2);
+  line(x-3,y-27,x+3,y-27,'#352b36',2);
+  silhouette(painted?'#bc5556':'#766b72',[[x-29,y-47],[x,y-66],[x+29,y-47]]);
+  fill(painted?'#48a9d2':'#9b8886',x-27,y-47,54,5);
+}
+function drawLandmarks(dawn){
+  for(const [distance,,kind] of landmarks){
+    const screenX=distance*scale-camera;
+    if(screenX < -180*scale || screenX > width+180*scale) continue;
+    ctx.save();
+    ctx.translate(screenX,ground);
+    ctx.scale(scale,scale);
+    if(kind==='ski'||kind==='sunrise'){
+      const horizon=-Math.min(118,ground*.42/scale);
+      const sunny=kind==='sunrise';
+      silhouette(sunny?'#806b73':'#4c5f88',[[-160,-35],[-113,horizon+21],[-65,horizon+10],[-25,horizon-44],[15,horizon-28],[55,horizon-37],[103,horizon-6],[159,-35]]);
+      const snow=blend([177,197,222],[255,210,149],sunny?dawn:0);
+      silhouette(snow,[[-65,horizon+10],[-25,horizon-44],[15,horizon-28],[55,horizon-37],[103,horizon-6],[75,horizon-13],[56,horizon-24],[31,horizon-11],[14,horizon-19],[-18,horizon-34],[-45,horizon+4]]);
+      if(!sunny){
+        silhouette('#c5dbeb',[[-24,horizon-35],[-16,horizon-31],[-7,horizon-5],[13,horizon+8],[23,horizon+30],[12,horizon+30],[4,horizon+14],[-18,horizon+1]]);
+        silhouette('#9dbce0',[[55,horizon-27],[60,horizon-25],[60,horizon-1],[76,horizon+17],[68,horizon+18],[54,horizon+4]]);
+      }
+    }else if(kind==='statue') landmarkFigure(0,-2,false);
+    else if(kind==='doll'){
+      fill('#5d4037',-51,-93,102,93);
+      fill('#ae8045',-45,-81,90,81);
+      silhouette('#f0e9df',[[-59,-84],[-40,-105],[52,-105],[58,-84]]);
+      landmarkFigure(8,-7,true);
+    }else if(kind==='shop'){
+      fill('#95877c',-70,-105,140,105);
+      fill('#222f42',-60,-90,48,25);
+      fill('#222f42',2,-90,48,25);
+      fill('#fff1dc',-72,-63,144,31);
+      fill('#ad454e',-72,-35,144,4);
+      landmarkText('みよしの',0,-41,'#243d8a',23);
+      fill('#483a39',-40,-29,60,29);
+    }else if(kind==='timber'){
+      fill('#754c39',-73,-75,146,75);
+      for(let plank=-68;plank<72;plank+=13) line(plank,-73,plank,0,'#58392f',2);
+      silhouette('#583d3a',[[-83,-71],[-24,-133],[61,-111],[83,-71]]);
+      line(-84,-73,-24,-134,'#e9e8e3',5);
+      line(-24,-134,62,-112,'#e9e8e3',5);
+      fill('#344753',-54,-53,28,34);
+      fill('#987058',24,-56,32,56);
+      line(14,-73,14,-2,'#55362e',4);
+    }else if(kind==='concierge'||kind==='heso'){
+      const concierge=kind==='concierge';
+      fill(concierge?'#343745':'#51566c',-54,-125,108,125);
+      for(let row=0;row<3;row++) fill('#253144',-46,-112+row*23,64,10);
+      fill(concierge?'#1b263a':'#f3e8cf',24,-122,24,108);
+      const sign=concierge?'フラノ':'へそビル';
+      [...sign].forEach((letter,index)=>landmarkText(letter,36,-100+index*19,concierge?'#fff5da':'#302f52',15));
+      if(concierge) landmarkText('CONCIERGE',-11,-18,'#f5ddac',10);
+    }
+    ctx.restore();
+  }
+}
 function drawBlueBridge(){
   const left=(finish-220)*scale-camera, span=300*scale;
   if(left>width||left+span<0) return;
@@ -228,6 +312,7 @@ function draw(){
   const dawn=progress*progress*(3-2*progress);
   drawFurano(dawn);
   drawBlueBridge();
+  drawLandmarks(dawn);
   fill(blend([137,159,192],[202,217,225],dawn),0,ground,width,height-ground);
   fill(blend([189,209,228],[249,247,237],dawn),0,ground,width,7*scale);
   for(const [a,b] of ice){
@@ -295,7 +380,7 @@ function draw(){
   }
 }
 const surfaceLabels={glide:'滑走中',snow:'雪道',ice:'氷の上',warning:'氷の上 · バランス注意',fall:'転倒 · 起き上がり中'};
-let displayedState;
+let displayedState, displayedLandmark;
 function frame(now){
   update(Math.min(.04,(now-last)/1000||0),now);last=now;draw();
   byId('time').textContent=format(elapsed);byId('best').textContent=best===null?'—':format(best);
@@ -306,6 +391,11 @@ function frame(now){
     byId('surface').dataset.state=state;
     byId('balance').parentElement.dataset.state=state;
     displayedState=state;
+  }
+  const landmark=landmarks.findLast(([distance])=>x>=distance-65)??landmarks[0];
+  if(landmark!==displayedLandmark){
+    byId('landmark').textContent=landmark[1];
+    displayedLandmark=landmark;
   }
   const pct=Math.round((x-65)/(finish-65)*100);
   byId('progress').style.width=pct+'%';byId('progress').parentElement.setAttribute('aria-valuenow',pct);
