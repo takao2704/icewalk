@@ -178,6 +178,8 @@ function drawFurano(dawn){
     silhouette(snow,[peak(170,-.11),peak(230,-.30),peak(286,-.24),peak(340,-.15),peak(302,-.166),peak(280,-.205),peak(269,-.12),peak(294,-.04),peak(314,-.01),peak(282,-.022),peak(249,-.124),peak(237,-.241),peak(215,-.184),peak(203,-.099),peak(192,-.142)]);
   }
 
+}
+function drawTown(dawn){
   const lot=116*scale;
   const townOffset=camera*.72;
   for(let i=Math.floor(townOffset/lot)-1;i<=(townOffset+width)/lot;i++){
@@ -234,14 +236,16 @@ function landmarkFigure(x,y,painted){
   silhouette(painted?'#bc5556':'#766b72',[[x-29,y-47],[x,y-66],[x+29,y-47]]);
   fill(painted?'#48a9d2':'#9b8886',x-27,y-47,54,5);
 }
-function drawLandmarks(dawn){
+function drawLandmarks(dawn, mountains){
   for(const [distance,,kind] of landmarks){
+    const isMountain=kind==='ski'||kind==='sunrise';
+    if(isMountain!==mountains) continue;
     const screenX=distance*scale-camera;
     if(screenX < -180*scale || screenX > width+180*scale) continue;
     ctx.save();
     ctx.translate(screenX,ground);
     ctx.scale(scale,scale);
-    if(kind==='ski'||kind==='sunrise'){
+    if(isMountain){
       const horizon=-Math.min(118,ground*.42/scale);
       const sunny=kind==='sunrise';
       silhouette(sunny?'#806b73':'#4c5f88',[[-160,-35],[-113,horizon+21],[-65,horizon+10],[-25,horizon-44],[15,horizon-28],[55,horizon-37],[103,horizon-6],[159,-35]]);
@@ -311,8 +315,10 @@ function draw(){
   const progress=clamp((x-65)/(finish-65),0,1);
   const dawn=progress*progress*(3-2*progress);
   drawFurano(dawn);
+  drawLandmarks(dawn,true);
+  drawTown(dawn);
   drawBlueBridge();
-  drawLandmarks(dawn);
+  drawLandmarks(dawn,false);
   fill(blend([137,159,192],[202,217,225],dawn),0,ground,width,height-ground);
   fill(blend([189,209,228],[249,247,237],dawn),0,ground,width,7*scale);
   for(const [a,b] of ice){
